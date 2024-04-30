@@ -23,11 +23,20 @@ typedef  struct
 
 static int32_t connect_server(char *cmd);
 static int32_t parsing_connect(char *cmd, char **ip, char **port);
-static void create_socke(void);
-static int32_t parsing_command(char *cmd);
+static int32_t create_socke(char *ip, char *port);
+static int32_t parsing_command(char *cmd, int32_t  sock_fd);
 static void create_command(char *cmd, LEDS *leds);
+static void get_server_info(int32_t sock_fd);
+static void leds_on(int32_t sock_fd, LEDS *leds);
+static void leds_off(int32_t sock_fd, LEDS *leds);
 
 
+/**
+ *   \brief   Точка входа
+ *   \param   argc - количество входных аргументов
+ *   \param  *argv - входные аргументы
+ *   \return  Код завершения
+ */
 int main(int argc, char *argv[])
 {
     int attempt = 0;
@@ -50,11 +59,15 @@ int main(int argc, char *argv[])
 }
 
 
+/**
+ *   \brief   Соединение с сервером и передача команды
+ *   \param  *cmd - команда
+ *   \return  Код завершения, 0 - введена корректная команда, 1 - введена не корректная команда
+ */
 static int32_t connect_server(char *cmd)
 {
-    struct sockaddr_in serv_addr;
-    int32_t  sock_fd = 0;
-    int32_t  retval = -10;
+    int32_t sock_fd = 0;
+    int32_t retval = -10;
     char *ip = NULL;
     char *port = NULL;
 
@@ -66,40 +79,22 @@ static int32_t connect_server(char *cmd)
             printf("%s\n", cmd);
             printf("%s\n", ip);
             printf("%s\n", port);
-            printf("# ");
-            sock_fd = socket(AF_INET, SOCK_STREAM, 0);
-
-            if (sock_fd == -1)
+            sock_fd = create_socke(ip, port);
+            while (1)
             {
-                printf("Socket не создался...\n");
-
-                exit(0);
+                fgets(cmd, SIZE_STR - 1, stdin);
+                if (strncmp(cmd, "exit", 4))
+                {
+                    parsing_command(cmd, sock_fd);
+                    printf("# ");
+                    bzero(cmd, SIZE_STR);
+                }
+                else
+                {
+                    printf("Выход из программы.\n");
+                    exit(0);
+                }
             }
-            else
-            {
-                printf("Socket успешно создан.\n");
-            }
-
-            bzero(&serv_addr, sizeof(serv_addr));
-
-            serv_addr.sin_family = AF_INET;
-            serv_addr.sin_addr.s_addr = inet_addr(ip);
-            printf("port: %d\n", atoi(port));
-            serv_addr.sin_port = htons(atoi(port));
-
-            if (connect(sock_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0)
-            {
-                printf("Соединение с сервером не установлено...\n");
-
-                exit(0);
-            }
-            else
-            {
-                printf("Сеодинение с сервером установлено.\n");
-            }
-
-            fgets(cmd, SIZE_STR - 1, stdin);
-            parsing_command(cmd);
             close(sock_fd);
             free(ip);
             free(port);
@@ -117,6 +112,13 @@ static int32_t connect_server(char *cmd)
 }
 
 
+/**
+ *   \brief   Разбор команды для соединения с сервером
+ *   \param  *cmd - команда
+ *   \param **ip - IP
+ *   \param **port - порт
+ *   \return  Код завершения, 0 - введена корректная команда, 1 - введена не корректная команда
+ */
 static int32_t parsing_connect(char *cmd, char **ip, char **port)
 {
     int32_t retval = -10;
@@ -144,11 +146,60 @@ static int32_t parsing_connect(char *cmd, char **ip, char **port)
 }
 
 
-static void create_socke(void)
-{}
+/**
+ *   \brief   Создание соединения с сервером
+ *   \param  *ip - IP
+ *   \param  *port - порт
+ *   \return  Код завершения, 0 - введена корректная команда, 1 - введена не корректная команда
+ */
+static int32_t create_socke(char *ip, char *port)
+{
+    struct sockaddr_in serv_addr;
+    int32_t  sock_fd = 0;
 
 
-int32_t parsing_command(char *cmd)
+    sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (sock_fd == -1)
+    {
+        printf("Socket не создался...\n");
+
+        exit(0);
+    }
+    else
+    {
+        printf("Socket успешно создан.\n");
+    }
+
+    bzero(&serv_addr, sizeof(serv_addr));
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = inet_addr(ip);
+    printf("port: %d\n", atoi(port));
+    serv_addr.sin_port = htons(atoi(port));
+
+    if (connect(sock_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0)
+    {
+        printf("Соединение с сервером не установлено...\n");
+
+        exit(0);
+    }
+    else
+    {
+        printf("Сеодинение с сервером установлено.\n");
+        printf("# ");
+    }
+
+    return sock_fd;
+}
+
+
+/**
+ *   \brief   Создание команд серверу
+ *   \param  *cmd - команда
+ *   \return  Код завершения, 0 - введена корректная команда, 1 - введена не корректная команда
+ */
+int32_t parsing_command(char *cmd, int32_t sock_fd)
 {
     int32_t retval = -10;
     char *check = NULL;
@@ -159,25 +210,18 @@ int32_t parsing_command(char *cmd)
 
     if (!strncmp(check, "ifconfig", 8))
     {
-        // TODO: запросить у сервера сетеве настройки
-        printf("%s", check);
+        get_server_info(sock_fd);
         retval = 0;
     }
     else if (!strncmp(check, "./start_leds", 12))
     {
-        // TODO: отправить на сервер команду включить светодиоды
         create_command(check, &leds);
-        printf("%d\n", leds.led1);
-        printf("%d\n", leds.led2);
-        printf("%d\n", leds.led3);
+        leds_on(sock_fd, &leds);
     }
     else if (!strncmp(check, "./stop_leds", 11))
     {
-        // TODO: отправить на сервер команду выключить светодиоды
         create_command(check, &leds);
-        printf("%d\n", leds.led1);
-        printf("%d\n", leds.led2);
-        printf("%d\n", leds.led3);
+        leds_off(sock_fd, &leds);
     }
     else
     {
@@ -188,6 +232,12 @@ int32_t parsing_command(char *cmd)
 }
 
 
+/**
+ *   \brief   Создание команды серверу
+ *   \param  *cmd - команда
+ *   \param  *leds - данные для сервера
+ *   \return  Нет
+ */
 static void create_command(char *cmd, LEDS *leds)
 {
     while (cmd != NULL)
@@ -209,5 +259,94 @@ static void create_command(char *cmd, LEDS *leds)
 
         cmd = strtok(NULL, " \n");
     }
+}
+
+
+/**
+ *   \brief   Запрос сетевых настроек сервера
+ *   \param   sock_fd - дескриптор сокета
+ *   \return  Нет
+ */
+static void get_server_info(int32_t sock_fd)
+{
+    char buff[255] = "ifconfig";
+
+
+    write(sock_fd, buff, sizeof(buff));
+    bzero(buff, sizeof(buff));
+    read(sock_fd, buff, sizeof(buff));
+    printf("%s\n", buff);
+}
+
+
+/**
+ *   \brief   Команды на включение светодиодов на сервере
+ *   \param   sock_fd - дескриптор сокета
+ *   \param  *leds - данные для сервера
+ *   \return  Нет
+ */
+static void leds_on(int32_t sock_fd, LEDS *leds)
+{
+    char buff[255];
+
+    bzero(buff, sizeof(buff));
+    strcpy(buff, "./start_leds");
+    if (leds->led1 == 1)
+    {
+        strcat(buff, " ");
+        strcat(buff, "LED1");
+    }
+
+    if (leds->led2 == 1)
+    {
+        strcat(buff, " ");
+        strcat(buff, "LED2");
+    }
+
+    if (leds->led3 == 1)
+    {
+        strcat(buff, " ");
+        strcat(buff, "LED3");
+    }
+
+    write(sock_fd, buff, sizeof(buff));
+    bzero(buff, sizeof(buff));
+    read(sock_fd, buff, sizeof(buff));
+}
+
+
+/**
+ *   \brief   Команды на включение светодиодов на сервере
+ *   \param   sock_fd - дескриптор сокета
+ *   \param  *leds - данные для сервера
+ *   \return  Нет
+ */
+static void leds_off(int32_t sock_fd, LEDS *leds)
+{
+    char buff[255];
+
+    bzero(buff, sizeof(buff));
+    strcpy(buff, "./stop_leds");
+    if (leds->led1 == 1)
+    {
+        strcat(buff, " ");
+        strcat(buff, "LED1");
+    }
+
+    if (leds->led2 == 1)
+    {
+        strcat(buff, " ");
+        strcat(buff, "LED2");
+    }
+
+    if (leds->led3 == 1)
+    {
+        strcat(buff, " ");
+        strcat(buff, "LED3");
+    }
+
+    write(sock_fd, buff, sizeof(buff));
+    bzero(buff, sizeof(buff));
+    read(sock_fd, buff, sizeof(buff));
 }
 
